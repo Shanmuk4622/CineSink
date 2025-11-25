@@ -1,0 +1,5 @@
+{
+  "name": "CineSync",
+  "description": "A hyper-local community website for VITAP students to track movies and discuss anonymously or publicly.",
+  "requestFramePermissions": []
+}
