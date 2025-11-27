@@ -7,7 +7,7 @@ import {
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../lib/AuthContext';
 
-const ANIMALS = ['Panda', 'Tiger', 'Fox', 'Eagle', 'Shark', 'Owl', 'Wolf', 'Bear'];
+const ANIMALS = ['Panda', 'Tiger', 'Fox', 'Eagle', 'Shark', 'Owl', 'Wolf', 'Bear', 'Lion', 'Hawk'];
 
 const Chat: React.FC = () => {
   // --- STATE ---
@@ -27,6 +27,22 @@ const Chat: React.FC = () => {
 
   // Zone C: Context State
   const [onlineCount, setOnlineCount] = useState<number>(0);
+
+  // --- HELPER: STABLE IDENTITY ---
+  // Generates the same animal for the same user in the same room always.
+  const getStableAnimal = (userId: string, roomId: string) => {
+    let hash = 0;
+    const str = userId + roomId;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const index = Math.abs(hash) % ANIMALS.length;
+    return ANIMALS[index];
+  };
+
+  const myAnonIdentity = (user && activeRoom?.type === 'match') 
+    ? getStableAnimal(user.id, activeRoom.id) 
+    : null;
 
   // --- 1. INITIALIZATION ---
   useEffect(() => {
@@ -121,7 +137,10 @@ const Chat: React.FC = () => {
   useEffect(() => {
     if (!activeRoom) return;
 
+    // FIX: Clear messages immediately to prevent ghosting from previous room
+    setMessages([]);
     setLoadingMessages(true);
+
     // Load initial messages
     const fetchMsgs = async () => {
         const { data } = await supabase
@@ -165,7 +184,8 @@ const Chat: React.FC = () => {
     if (!inputText.trim() || !user || !activeRoom) return;
     
     const isAnon = activeRoom.type === 'match';
-    const fakeName = isAnon ? `Anonymous ${ANIMALS[Math.floor(Math.random() * ANIMALS.length)]}` : undefined;
+    // Use stable identity
+    const fakeName = isAnon ? `Anonymous ${getStableAnimal(user.id, activeRoom.id)}` : undefined;
 
     const { error } = await supabase.from('messages').insert({
         room_id: activeRoom.id,
@@ -307,8 +327,14 @@ const Chat: React.FC = () => {
                                 {activeRoom.type === 'public' ? activeRoom.name : 'Anonymous Match'}
                             </h2>
                             <p className="text-xs text-green-400 flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                                {activeRoom.type === 'public' ? `${onlineCount} students online` : 'Incognito Mode Active'}
+                                {activeRoom.type === 'public' ? (
+                                    <>
+                                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                                        {onlineCount} students online
+                                    </>
+                                ) : (
+                                    <span className="text-indigo-400">You are <b>Anonymous {myAnonIdentity}</b></span>
+                                )}
                             </p>
                         </div>
                     </div>
@@ -331,62 +357,66 @@ const Chat: React.FC = () => {
 
                 {/* Message Stream */}
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-1">
-                    {messages.length === 0 && !loadingMessages && (
+                    {loadingMessages ? (
+                        <div className="h-full flex items-center justify-center text-indigo-400">
+                             <Loader2 size={32} className="animate-spin" />
+                        </div>
+                    ) : messages.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
                             <MessageSquare size={48} className="mb-4 text-slate-700" />
                             <p>No messages yet. Say hello!</p>
                         </div>
-                    )}
-                    
-                    {messages.map((msg, idx) => {
-                        const isMe = msg.user_id === user?.id;
-                        const grouped = isMessageGrouped(idx);
-                        const showAvatar = !isMe && !grouped;
-                        const displayName = msg.is_anonymous 
-                            ? (msg.fake_username || "Anonymous")
-                            : (msg.profiles?.username || "Student");
+                    ) : (
+                        messages.map((msg, idx) => {
+                            const isMe = msg.user_id === user?.id;
+                            const grouped = isMessageGrouped(idx);
+                            const showAvatar = !isMe && !grouped;
+                            const displayName = msg.is_anonymous 
+                                ? (msg.fake_username || "Anonymous")
+                                : (msg.profiles?.username || "Student");
 
-                        return (
-                            <div key={msg.id} className={`flex gap-3 group ${isMe ? 'flex-row-reverse' : ''} ${grouped ? 'mt-1' : 'mt-6'}`}>
-                                {/* Avatar */}
-                                <div className="w-10 flex-shrink-0 flex flex-col items-center">
-                                    {showAvatar && (
-                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border border-slate-700 ${msg.is_anonymous ? 'bg-gradient-to-br from-slate-700 to-slate-800' : 'bg-indigo-900'}`}>
-                                            {msg.profiles?.avatar_url && !msg.is_anonymous ? (
-                                                <img src={msg.profiles.avatar_url} alt="Av" className="w-full h-full object-cover" />
-                                            ) : (
-                                                <User size={18} className="text-slate-400" />
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                                
-                                {/* Bubble Area */}
-                                <div className={`max-w-[70%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                                    {/* Name & Time Header */}
-                                    {!grouped && (
-                                        <div className="flex items-center gap-2 mb-1 px-1">
-                                            <span className={`text-sm font-bold ${msg.is_anonymous ? 'text-slate-300' : 'text-indigo-400'}`}>
-                                                {displayName}
-                                            </span>
-                                            <span className="text-[10px] text-slate-600">
-                                                {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                            </span>
-                                        </div>
-                                    )}
+                            return (
+                                <div key={msg.id} className={`flex gap-3 group ${isMe ? 'flex-row-reverse' : ''} ${grouped ? 'mt-1' : 'mt-6'}`}>
+                                    {/* Avatar */}
+                                    <div className="w-10 flex-shrink-0 flex flex-col items-center">
+                                        {showAvatar && (
+                                            <div className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border border-slate-700 ${msg.is_anonymous ? 'bg-gradient-to-br from-slate-700 to-slate-800' : 'bg-indigo-900'}`}>
+                                                {msg.profiles?.avatar_url && !msg.is_anonymous ? (
+                                                    <img src={msg.profiles.avatar_url} alt="Av" className="w-full h-full object-cover" />
+                                                ) : (
+                                                    <User size={18} className="text-slate-400" />
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
                                     
-                                    {/* The Bubble */}
-                                    <div className={`px-4 py-2.5 text-sm leading-relaxed shadow-sm transition-all relative ${
-                                        isMe 
-                                        ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm' 
-                                        : 'bg-slate-800 text-slate-200 rounded-2xl rounded-tl-sm border border-slate-700'
-                                    }`}>
-                                        {msg.content}
+                                    {/* Bubble Area */}
+                                    <div className={`max-w-[70%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                                        {/* Name & Time Header */}
+                                        {!grouped && (
+                                            <div className="flex items-center gap-2 mb-1 px-1">
+                                                <span className={`text-sm font-bold ${msg.is_anonymous ? 'text-slate-300' : 'text-indigo-400'}`}>
+                                                    {displayName}
+                                                </span>
+                                                <span className="text-[10px] text-slate-600">
+                                                    {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                                </span>
+                                            </div>
+                                        )}
+                                        
+                                        {/* The Bubble */}
+                                        <div className={`px-4 py-2.5 text-sm leading-relaxed shadow-sm transition-all relative ${
+                                            isMe 
+                                            ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm' 
+                                            : 'bg-slate-800 text-slate-200 rounded-2xl rounded-tl-sm border border-slate-700'
+                                        }`}>
+                                            {msg.content}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        );
-                    })}
+                            );
+                        })
+                    )}
                     <div ref={messagesEndRef} />
                 </div>
 
@@ -424,7 +454,7 @@ const Chat: React.FC = () => {
                     {activeRoom.type === 'match' && (
                         <div className="text-center mt-2">
                             <span className="text-xs text-slate-500 flex items-center justify-center gap-1">
-                                <Zap size={10} className="text-yellow-500" /> Messages are not linked to your public profile.
+                                <Zap size={10} className="text-yellow-500" /> You are chatting as <b>Anonymous {myAnonIdentity}</b>
                             </span>
                         </div>
                     )}

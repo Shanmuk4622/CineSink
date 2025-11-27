@@ -14,8 +14,8 @@ interface MovieCardProps {
 
 const MovieCard: React.FC<MovieCardProps> = ({ movie, onAdd, onRemove, onMarkWatched, isAdded = false, onClick }) => {
   
-  // Safe Date Logic
-  const releaseYear = movie.release_date 
+  // Safe Date Logic: Check if date string is valid and not empty
+  const releaseYear = movie.release_date && !isNaN(new Date(movie.release_date).getTime())
     ? new Date(movie.release_date).getFullYear() 
     : 'N/A';
 

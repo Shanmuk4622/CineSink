@@ -46,6 +46,7 @@ const Dashboard: React.FC = () => {
 
   // --- Data Fetching Logic ---
   useEffect(() => {
+    let isMounted = true;
     const loadMovies = async () => {
       // If it's page 1, show main loader. If page > 1, show "loading more" spinner at bottom
       if (page === 1) setLoading(true);
@@ -62,6 +63,8 @@ const Dashboard: React.FC = () => {
               data = await discoverMoviesByGenre(selectedGenre, page);
           }
 
+          if (!isMounted) return;
+
           if (page === 1) {
               setMovies(data);
           } else {
@@ -74,8 +77,10 @@ const Dashboard: React.FC = () => {
       } catch (e) {
           console.error("Fetch error", e);
       } finally {
-          setLoading(false);
-          setLoadingMore(false);
+          if (isMounted) {
+            setLoading(false);
+            setLoadingMore(false);
+          }
       }
     };
     
@@ -84,7 +89,7 @@ const Dashboard: React.FC = () => {
         loadMovies();
     }, 100);
 
-    return () => clearTimeout(timeoutId);
+    return () => { isMounted = false; clearTimeout(timeoutId); };
   }, [selectedGenre, isSearching, page, searchQuery]); 
   // Note: searchQuery is in dependency array but we control it via isSearching flag for API calls mostly,
   // except when typing in the search box we might want to debounce. 
@@ -92,6 +97,7 @@ const Dashboard: React.FC = () => {
 
   // Fetch watchlist
   useEffect(() => {
+      let isMounted = true;
       const loadUserLibrary = async () => {
           if (user) {
               const { data } = await supabase
@@ -100,12 +106,13 @@ const Dashboard: React.FC = () => {
                   .eq('user_id', user.id)
                   .eq('status', 'watchlist');
               
-              if (data) {
+              if (isMounted && data) {
                   setWatchlist(data.map(item => item.movie_id));
               }
           }
       };
       loadUserLibrary();
+      return () => { isMounted = false; };
   }, [user]);
 
   // --- Handlers ---

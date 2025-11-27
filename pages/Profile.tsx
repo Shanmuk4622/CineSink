@@ -82,14 +82,18 @@ const Profile: React.FC = () => {
     const handleRemove = async (id: number) => {
         if (!user) return;
         
+        let newCount = watchedCount;
+        
         // Optimistic Update
         if (activeTab === 'watchlist') {
             setWatchlistMovies(prev => prev.filter(m => m.id !== id));
         } else {
             setWatchedMovies(prev => prev.filter(m => m.id !== id));
-            setWatchedCount(prev => Math.max(0, prev - 1));
+            newCount = Math.max(0, watchedCount - 1);
+            setWatchedCount(newCount);
         }
 
+        // Delete from Library
         const { error } = await supabase
             .from('user_library')
             .delete()
@@ -99,6 +103,9 @@ const Profile: React.FC = () => {
         if (error) {
             console.error("Error removing movie:", error);
             // In a real app, revert here
+        } else if (activeTab === 'watched') {
+            // SYNC FIX: If removed from history, decrement stats in DB
+            await supabase.from('profiles').update({ watched_count: newCount }).eq('id', user.id);
         }
     };
 
@@ -112,7 +119,8 @@ const Profile: React.FC = () => {
         // Optimistic Update: Move from Watchlist to Watched
         setWatchlistMovies(prev => prev.filter(m => m.id !== id));
         setWatchedMovies(prev => [movie, ...prev]);
-        setWatchedCount(prev => prev + 1);
+        const newCount = watchedCount + 1;
+        setWatchedCount(newCount);
 
         // Update DB
         const { error } = await supabase
@@ -123,8 +131,8 @@ const Profile: React.FC = () => {
             
         if (error) console.error("Error marking watched:", error);
         
-        // Also update profile count cache if needed
-        await supabase.from('profiles').update({ watched_count: watchedCount + 1 }).eq('id', user.id);
+        // Also update profile count cache
+        await supabase.from('profiles').update({ watched_count: newCount }).eq('id', user.id);
     };
 
     const handleLogin = async (e: React.FormEvent) => {
