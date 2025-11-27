@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { ChatRoom, Message, RoomType, Profile } from '../types';
 import { 
   Send, Users, Hash, Zap, Loader2, 
-  MessageSquare, User, Smile, Eye, Lock, AlertTriangle, ArrowLeft
+  MessageSquare, User, Smile, Eye, Lock, AlertTriangle, ArrowLeft, Clock, Check
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../lib/AuthContext';
@@ -25,11 +26,7 @@ const Chat: React.FC = () => {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Zone C: Context State
-  const [onlineCount, setOnlineCount] = useState<number>(0);
-
   // --- HELPER: STABLE IDENTITY ---
-  // Generates the same animal for the same user in the same room always.
   const getStableAnimal = (userId: string, roomId: string) => {
     let hash = 0;
     const str = userId + roomId;
@@ -74,8 +71,6 @@ const Chat: React.FC = () => {
   };
 
   // --- 2. RANDOM MATCHMAKING LOGIC ---
-  
-  // Effect to handle queue subscription cleanup
   useEffect(() => {
     let queueChannel: any = null;
 
@@ -87,7 +82,6 @@ const Chat: React.FC = () => {
                 async (payload) => {
                     const newRoomId = payload.new.room_id;
                     await joinMatchRoom(newRoomId);
-                    // Subscription will be cleaned up by the cleanup function when isSearchingMatch becomes false
                 }
             )
             .subscribe();
@@ -114,7 +108,6 @@ const Chat: React.FC = () => {
       if (roomId) {
         await joinMatchRoom(roomId);
       }
-      // If no room returned, the useEffect above is already listening to the queue
     } catch (e) {
       console.error("Match error", e);
       setIsSearchingMatch(false);
@@ -133,69 +126,144 @@ const Chat: React.FC = () => {
     }
   };
 
-  // --- 3. MESSAGING LOGIC (REALTIME) ---
+  // --- 3. MESSAGING LOGIC (REALTIME & OPTIMISTIC) ---
+  
+  // A. Scroll Helper
+  const scrollToBottom = (behavior: 'smooth' | 'auto' = 'smooth') => {
+    setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior });
+    }, 50);
+  };
+
+  // B. Load & Subscribe
   useEffect(() => {
     if (!activeRoom) return;
 
-    // FIX: Clear messages immediately to prevent ghosting from previous room
+    // Reset state for new room
     setMessages([]);
     setLoadingMessages(true);
 
-    // Load initial messages
+    // 1. Fetch History
     const fetchMsgs = async () => {
         const { data } = await supabase
             .from('messages')
             .select('*, profiles(username, avatar_url)')
             .eq('room_id', activeRoom.id)
             .order('created_at', { ascending: true });
-        setMessages(data || []);
-        setLoadingMessages(false);
+        
+        if (data) {
+            // Mark all fetched messages as sent
+            const history = data.map(m => ({ ...m, status: 'sent' as const }));
+            setMessages(history);
+            setLoadingMessages(false);
+            scrollToBottom('auto');
+        } else {
+            setLoadingMessages(false);
+        }
     };
     fetchMsgs();
 
-    // Subscribe to new messages
+    // 2. Realtime Subscription
     const channel = supabase
         .channel(`room:${activeRoom.id}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${activeRoom.id}` }, async (payload) => {
             const newMsg = payload.new as Message;
-            // Fetch profile for the new message
-            const { data } = await supabase.from('profiles').select('username, avatar_url').eq('id', newMsg.user_id).single();
-            newMsg.profiles = data as Profile;
-            
-            // EDGE CASE FIX: Prevent duplicate messages from realtime + initial fetch race condition
+            newMsg.status = 'sent';
+
+            // We need to fetch the profile data for this new message if it's not us
+            // (If it is us, we might still want to do this to ensure consistency, or rely on our local optimistic profile)
+            if (newMsg.user_id !== user?.id) {
+                const { data: userProfile } = await supabase.from('profiles').select('username, avatar_url').eq('id', newMsg.user_id).single();
+                if (userProfile) {
+                    newMsg.profiles = userProfile as Profile;
+                }
+            } else {
+                // If it IS us, we probably already have an optimistic version in the state.
+                // We need to match them up.
+                newMsg.profiles = profile;
+            }
+
             setMessages(prev => {
+                // Deduplication logic:
+                // 1. Check if ID already exists (Realtime double fire)
                 if (prev.find(m => m.id === newMsg.id)) return prev;
+
+                // 2. Check if we have an optimistic message (temp ID) that matches this content
+                // This prevents the "double message" flash when the DB confirms insertion
+                const optimisticMatchIndex = prev.findIndex(m => 
+                    m.user_id === newMsg.user_id && 
+                    m.content === newMsg.content && 
+                    m.status === 'sending'
+                );
+
+                if (optimisticMatchIndex !== -1) {
+                    // Replace the optimistic message with the real one
+                    const newArr = [...prev];
+                    newArr[optimisticMatchIndex] = newMsg;
+                    return newArr;
+                }
+
+                // If no match, it's a new message from someone else (or a very delayed one from us)
                 return [...prev, newMsg];
             });
+            
+            scrollToBottom();
         })
         .subscribe();
         
-    setOnlineCount(Math.floor(Math.random() * 40) + 5);
-
     return () => { supabase.removeChannel(channel); };
   }, [activeRoom]);
 
-  // Scroll to bottom on new message
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loadingMessages]);
 
+  // C. Send Function (Optimistic)
   const sendMessage = async () => {
     if (!inputText.trim() || !user || !activeRoom) return;
     
+    const textToSend = inputText;
+    setInputText(''); // Clear input immediately
+    
+    // 1. Create Optimistic Message
     const isAnon = activeRoom.type === 'match';
-    // Use stable identity
     const fakeName = isAnon ? `Anonymous ${getStableAnimal(user.id, activeRoom.id)}` : undefined;
+    const tempId = `temp-${Date.now()}`; 
 
-    const { error } = await supabase.from('messages').insert({
+    const optimisticMsg: Message = {
+        id: tempId,
         room_id: activeRoom.id,
         user_id: user.id,
-        content: inputText,
+        content: textToSend,
+        created_at: new Date().toISOString(),
+        is_anonymous: isAnon,
+        fake_username: fakeName,
+        profiles: profile,
+        status: 'sending'
+    };
+
+    // Update UI Immediately
+    setMessages(prev => [...prev, optimisticMsg]);
+    scrollToBottom();
+
+    // 2. Send to Backend
+    const { data, error } = await supabase.from('messages').insert({
+        room_id: activeRoom.id,
+        user_id: user.id,
+        content: textToSend,
         is_anonymous: isAnon,
         fake_username: fakeName
-    });
+    }).select().single();
 
-    if (!error) setInputText('');
+    if (error) {
+        console.error("Failed to send", error);
+        // Mark as error in UI
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'error' } : m));
+        alert("Failed to send. Please check your connection.");
+    } else if (data) {
+        // 3. Success: Update Temp ID to Real ID
+        // Note: The Realtime subscription might fire before or after this.
+        setMessages(prev => prev.map(m => 
+            m.id === tempId ? { ...m, id: data.id, status: 'sent' } : m
+        ));
+    }
   };
 
   // --- 4. RENDER HELPERS ---
@@ -232,7 +300,6 @@ const Chat: React.FC = () => {
     <div className="flex h-[calc(100vh-64px)] bg-slate-900 text-slate-100 overflow-hidden font-sans relative">
       
       {/* --- ZONE A: NAVIGATION SIDEBAR --- */}
-      {/* Mobile Toggle Logic: Hidden if a room is active on mobile */}
       <div className={`w-full md:w-72 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col absolute md:relative z-10 h-full transition-transform duration-300 ${activeRoom ? '-translate-x-full md:translate-x-0' : 'translate-x-0'}`}>
         
         {/* Global/Broadcast Header */}
@@ -330,7 +397,7 @@ const Chat: React.FC = () => {
                                 {activeRoom.type === 'public' ? (
                                     <>
                                         <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                                        {onlineCount} students online
+                                        Live
                                     </>
                                 ) : (
                                     <span className="text-indigo-400">You are <b>Anonymous {myAnonIdentity}</b></span>
@@ -339,7 +406,7 @@ const Chat: React.FC = () => {
                         </div>
                     </div>
                     
-                    {/* Innovative Feature: Reveal Identity */}
+                    {/* Reveal Identity Button */}
                     {activeRoom.type === 'match' && (
                         <button 
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
@@ -411,6 +478,14 @@ const Chat: React.FC = () => {
                                             : 'bg-slate-800 text-slate-200 rounded-2xl rounded-tl-sm border border-slate-700'
                                         }`}>
                                             {msg.content}
+                                            
+                                            {/* Status Indicator */}
+                                            {isMe && (
+                                                <div className="absolute -bottom-4 right-1 text-[10px] opacity-70 flex items-center gap-1">
+                                                    {msg.status === 'sending' && <Clock size={10} className="animate-pulse" />}
+                                                    {msg.status === 'error' && <AlertTriangle size={10} className="text-red-500" />}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -474,24 +549,12 @@ const Chat: React.FC = () => {
         )}
       </div>
 
-      {/* --- ZONE C: CONTEXT PANEL (Desktop Only) --- */}
+      {/* --- ZONE C: CONTEXT PANEL --- */}
       <div className="w-64 bg-slate-900 border-l border-slate-800 hidden lg:flex flex-col p-6">
         {activeRoom && activeRoom.type === 'public' ? (
             <>
                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Room Info</h3>
                  <p className="text-sm text-slate-400 mb-6">This is a public broadcast channel. Be respectful to your fellow VITAP students.</p>
-                 
-                 <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Active Now</h3>
-                 <div className="space-y-3">
-                    {[1,2,3].map(i => (
-                        <div key={i} className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-400">
-                                <User size={14} />
-                            </div>
-                            <div className="h-2 w-24 bg-slate-800 rounded"></div>
-                        </div>
-                    ))}
-                 </div>
             </>
         ) : activeRoom && activeRoom.type === 'match' ? (
             <>
@@ -502,13 +565,6 @@ const Chat: React.FC = () => {
                     </div>
                     <h3 className="font-bold text-white">Anonymous Match</h3>
                     <p className="text-xs text-slate-500 mt-1">Found via Queue</p>
-                </div>
-                
-                <div className="mt-8 bg-indigo-900/10 rounded-xl p-4 border border-indigo-900/30">
-                    <h4 className="text-xs font-bold text-indigo-400 mb-2">Talking Points</h4>
-                    <p className="text-sm text-slate-300 leading-relaxed">
-                        Ask them about the latest <span className="text-white font-medium">Christopher Nolan</span> movie or if they liked <span className="text-white font-medium">Dune: Part Two</span>.
-                    </p>
                 </div>
             </>
         ) : (

@@ -50,6 +50,7 @@ export interface Message {
   // Display Logic
   is_anonymous: boolean;
   fake_username?: string;
+  status?: 'sending' | 'sent' | 'error'; // New field for UI feedback
   
   // Joins
   profiles?: Profile | null;
