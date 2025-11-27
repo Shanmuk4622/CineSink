@@ -1,16 +1,24 @@
 import React from 'react';
-import { Star, PlusCircle, CheckCircle, Trash2 } from 'lucide-react';
+import { Star, PlusCircle, CheckCircle, Trash2, Eye } from 'lucide-react';
 import { Movie } from '../types';
 
 interface MovieCardProps {
   movie: Movie;
   onAdd?: (id: number) => void;
   onRemove?: (id: number) => void;
+  onMarkWatched?: (id: number) => void;
   isAdded?: boolean;
   onClick?: () => void;
+  actionLabel?: string; // Optional custom label
 }
 
-const MovieCard: React.FC<MovieCardProps> = ({ movie, onAdd, onRemove, isAdded = false, onClick }) => {
+const MovieCard: React.FC<MovieCardProps> = ({ movie, onAdd, onRemove, onMarkWatched, isAdded = false, onClick }) => {
+  
+  // Safe Date Logic
+  const releaseYear = movie.release_date 
+    ? new Date(movie.release_date).getFullYear() 
+    : 'N/A';
+
   return (
     <div className="bg-slate-800 rounded-xl overflow-hidden shadow-lg hover:shadow-indigo-500/20 transition-all duration-300 group flex flex-col h-full relative">
       <div 
@@ -41,9 +49,25 @@ const MovieCard: React.FC<MovieCardProps> = ({ movie, onAdd, onRemove, isAdded =
         >
             {movie.title}
         </h3>
-        <p className="text-slate-400 text-xs mt-1">{new Date(movie.release_date).getFullYear()}</p>
+        <p className="text-slate-400 text-xs mt-1">{releaseYear}</p>
         
-        <div className="mt-auto pt-4">
+        <div className="mt-auto pt-4 space-y-2">
+            {/* Context Aware Actions */}
+            
+            {/* 1. Mark as Watched (Available in Profile Watchlist) */}
+            {onMarkWatched && (
+               <button 
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onMarkWatched(movie.id);
+                }}
+                className="w-full py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-colors bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600 hover:text-white border border-indigo-600/30"
+               >
+                   <Eye size={16} /> Mark Watched
+               </button>
+            )}
+
+            {/* 2. Remove (Available in Profile) */}
             {onRemove ? (
                 <button 
                 onClick={(e) => {
@@ -55,28 +79,31 @@ const MovieCard: React.FC<MovieCardProps> = ({ movie, onAdd, onRemove, isAdded =
                     <Trash2 size={16} /> Remove
                 </button>
             ) : (
-                <button 
-                onClick={(e) => {
-                    e.stopPropagation();
-                    if (onAdd) onAdd(movie.id);
-                }}
-                disabled={isAdded}
-                className={`w-full py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
-                    isAdded 
-                    ? 'bg-green-600/20 text-green-500 cursor-default'
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                }`}
-                >
-                {isAdded ? (
-                    <>
-                    <CheckCircle size={16} /> Added
-                    </>
-                ) : (
-                    <>
-                    <PlusCircle size={16} /> Watchlist
-                    </>
-                )}
-                </button>
+                /* 3. Add to Watchlist (Available in Dashboard) */
+                !onMarkWatched && (
+                    <button 
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (onAdd) onAdd(movie.id);
+                    }}
+                    disabled={isAdded}
+                    className={`w-full py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
+                        isAdded 
+                        ? 'bg-green-600/20 text-green-500 cursor-default'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                    }`}
+                    >
+                    {isAdded ? (
+                        <>
+                        <CheckCircle size={16} /> Added
+                        </>
+                    ) : (
+                        <>
+                        <PlusCircle size={16} /> Watchlist
+                        </>
+                    )}
+                    </button>
+                )
             )}
         </div>
       </div>

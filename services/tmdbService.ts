@@ -10,7 +10,8 @@ export const fetchTrendingMovies = async (): Promise<Movie[]> => {
     const response = await fetch(`${BASE_URL}/trending/movie/week?api_key=${API_KEY}`);
     const data = await response.json();
     
-    return data.results.map((m: any) => transformMovie(m)).slice(0, 10);
+    // Return all results (usually 20), removed slice limit
+    return data.results.map((m: any) => transformMovie(m));
   } catch (error) {
     console.error("Error fetching trending movies:", error);
     return [];
@@ -21,7 +22,7 @@ export const discoverMoviesByGenre = async (genreId: number): Promise<Movie[]> =
   try {
     const response = await fetch(`${BASE_URL}/discover/movie?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc`);
     const data = await response.json();
-    return data.results.map((m: any) => transformMovie(m)).slice(0, 10);
+    return data.results.map((m: any) => transformMovie(m));
   } catch (error) {
     console.error("Error discovering movies:", error);
     return [];

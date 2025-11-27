@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ChatRoom, Message, RoomType, Profile } from '../types';
 import { 
   Send, Users, Hash, Zap, Loader2, 
-  MessageSquare, User, Smile, Eye, Lock, AlertTriangle
+  MessageSquare, User, Smile, Eye, Lock, AlertTriangle, ArrowLeft
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../lib/AuthContext';
@@ -205,10 +204,11 @@ const Chat: React.FC = () => {
   }
 
   return (
-    <div className="flex h-[calc(100vh-64px)] bg-slate-900 text-slate-100 overflow-hidden font-sans">
+    <div className="flex h-[calc(100vh-64px)] bg-slate-900 text-slate-100 overflow-hidden font-sans relative">
       
       {/* --- ZONE A: NAVIGATION SIDEBAR --- */}
-      <div className="w-72 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col">
+      {/* Mobile Toggle Logic: Hidden if a room is active on mobile */}
+      <div className={`w-full md:w-72 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col absolute md:relative z-10 h-full transition-transform duration-300 ${activeRoom ? '-translate-x-full md:translate-x-0' : 'translate-x-0'}`}>
         
         {/* Global/Broadcast Header */}
         <div className="p-4 border-b border-slate-800">
@@ -279,13 +279,21 @@ const Chat: React.FC = () => {
       </div>
 
       {/* --- ZONE B: CHAT ARENA --- */}
-      <div className="flex-1 flex flex-col min-w-0 bg-slate-950/30 relative">
+      <div className={`flex-1 flex flex-col min-w-0 bg-slate-950/30 relative w-full h-full absolute md:relative transition-transform duration-300 ${activeRoom ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}>
         
         {activeRoom ? (
             <>
                 {/* Header */}
-                <div className="h-16 px-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50 backdrop-blur-md">
+                <div className="h-16 px-4 md:px-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50 backdrop-blur-md">
                     <div className="flex items-center gap-3">
+                        {/* Mobile Back Button */}
+                        <button 
+                            onClick={() => setActiveRoom(null)}
+                            className="md:hidden p-1 mr-1 text-slate-400 hover:text-white"
+                        >
+                            <ArrowLeft size={24} />
+                        </button>
+
                         <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center">
                             {activeRoom.type === 'public' ? <Hash size={20} className="text-slate-400" /> : <Zap size={20} className="text-yellow-400" />}
                         </div>
@@ -317,7 +325,7 @@ const Chat: React.FC = () => {
                 </div>
 
                 {/* Message Stream */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-1">
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-1">
                     {messages.length === 0 && !loadingMessages && (
                         <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
                             <MessageSquare size={48} className="mb-4 text-slate-700" />
@@ -392,7 +400,7 @@ const Chat: React.FC = () => {
                                     sendMessage();
                                 }
                             }}
-                            placeholder={`Message ${activeRoom.type === 'public' ? `#${activeRoom.name}` : 'Match'}...`}
+                            placeholder={`Message...`}
                             className="flex-1 bg-transparent border-none focus:ring-0 text-slate-200 placeholder-slate-500 resize-none max-h-32 min-h-[44px] py-2.5 scrollbar-hide"
                             rows={1}
                         />

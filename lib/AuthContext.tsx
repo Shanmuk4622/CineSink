@@ -8,6 +8,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   signOut: () => Promise<void>;
+  loginWithCredentials: (email: string, pass: string) => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -16,6 +17,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   error: null,
   signOut: async () => {},
+  loginWithCredentials: async () => null,
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -147,8 +149,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       window.location.reload(); // Force reload to restart auth flow
   };
 
+  const loginWithCredentials = async (email: string, pass: string): Promise<string | null> => {
+      const { data, error } = await supabase.auth.signInWithPassword({
+          email, password: pass
+      });
+      
+      if (error) return error.message;
+      if (data.session) {
+          // Update local storage so we persist this user next time
+          localStorage.setItem(GHOST_CREDS_KEY, JSON.stringify({ email, password: pass }));
+          window.location.reload();
+          return null;
+      }
+      return "Login failed";
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, error, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, error, signOut, loginWithCredentials }}>
       {children}
     </AuthContext.Provider>
   );
