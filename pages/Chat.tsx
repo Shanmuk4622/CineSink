@@ -3,15 +3,20 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChatRoom, Message, RoomType, Profile } from '../types';
 import { 
   Send, Users, Hash, Zap, Loader2, 
-  MessageSquare, User, Smile, Eye, Lock, AlertTriangle, ArrowLeft, Clock, Check
+  MessageSquare, User, Smile, Eye, Lock, AlertTriangle, ArrowLeft, Clock
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../lib/AuthContext';
 
 const ANIMALS = ['Panda', 'Tiger', 'Fox', 'Eagle', 'Shark', 'Owl', 'Wolf', 'Bear', 'Lion', 'Hawk'];
 
+// A curated list of popular emojis
 const EMOJIS = [
-    "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "🥲", "☺️", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗", "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯", "😦", "😧", "😮", "😲", "🥱", "😴", "🤤", "😪", "😵", "🤐", "🥴", "🤢", "🤮", "🤧", "😷", "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👹", "👺", "🤡", "💩", "👻", "💀", "☠️", "👽", "👾", "🤖", "🎃", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾", "👋", "🤚", "🖐", "✋", "🖖", "👌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍", "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝", "🙏", "✍️", "💅", "🤳", "💪", "🦾", "🦿", "🦵", "🦶", "👂", "🦻", "👃", "🧠", "🫀", "🫁", "🦷", "🦴", "👀", "👁", "👅", "👄", "💋", "❤", "🧡", "💛", "💚", "💙", "💜", "🤎", "🖤", "🤍", "💔", "❣", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "🔥", "✨", "🌟", "💫", "💥", "💢", "💦", "💧", "💤", "🕳", "🎉", "🎊", "🎈", "🎂", "🎁", "🧨", "🏆", "🥇", "🥈", "🥉", "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🎱", "🪀", "🏓", "🏸", "🏒", "🏑", "🥍", "🏏", "🪃", "🥅", "⛳", "🪁", "🏹", "🎣", "🤿", "🥊", "🥋", "🎽", "🛹", "🛼", "🛷", "⛸", "🥌", "🎿", "⛷", "🏂", "🪂", "🏋️", "🤼", "🤸", "⛹️", "🤺", "🤾", "🏌️", "🏇", "🧘"
+    "😀", "😂", "🥰", "😍", "😎", "😭", "😡", "👍", "👎", "🔥", "✨", "🎉", "💀", "👻", "👀",
+    "🤝", "🙏", "💪", "🧠", "🤡", "💩", "🤮", "🤧", "😷", "🥴", "🤫", "🤔", "🤯", "❤️", "💔",
+    "💯", "💢", "💥", "💫", "💦", "💤", "👋", "👌", "✌️", "🤞", "🤟", "🤙", "🖕", "☝️", "👇",
+    "⚽", "🏀", "🎮", "🚀", "🛸", "🌍", "🌈", "☀️", "🌙", "⭐", "🍎", "🍕", "🍔", "🍟", "🍺",
+    "🚗", "✈️", "🚨", "🔋", "💡", "📷", "📱", "💻", "💰", "💎", "🔨", "🛡️", "🏹", "🔮", "🧸"
 ];
 
 const Chat: React.FC = () => {
@@ -135,9 +140,9 @@ const Chat: React.FC = () => {
   
   // A. Scroll Helper
   const scrollToBottom = (behavior: 'smooth' | 'auto' = 'smooth') => {
-    setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior });
-    }, 50);
+    if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior });
+    }
   };
 
   // B. Load & Subscribe
@@ -162,7 +167,7 @@ const Chat: React.FC = () => {
             const history = data.map(m => ({ ...m, status: 'sent' as const }));
             setMessages(history);
             setLoadingMessages(false);
-            scrollToBottom('auto');
+            setTimeout(() => scrollToBottom('auto'), 100);
         } else {
             setLoadingMessages(false);
         }
@@ -176,6 +181,7 @@ const Chat: React.FC = () => {
             const newMsg = payload.new as Message;
             newMsg.status = 'sent';
 
+            // If it's another user, we need to fetch their profile details
             if (newMsg.user_id !== user?.id) {
                 const { data: userProfile } = await supabase.from('profiles').select('username, avatar_url').eq('id', newMsg.user_id).single();
                 if (userProfile) {
@@ -186,9 +192,12 @@ const Chat: React.FC = () => {
             }
 
             setMessages(prev => {
-                // Deduplication logic:
+                // DEDUPLICATION:
+                // 1. If we already have a message with this REAL ID, ignore (we updated it in sendMessage).
                 if (prev.find(m => m.id === newMsg.id)) return prev;
 
+                // 2. If we have an OPTIMISTIC message (temp ID) that matches this content/user, replace it.
+                // We assume the oldest 'sending' message that matches is the one.
                 const optimisticMatchIndex = prev.findIndex(m => 
                     m.user_id === newMsg.user_id && 
                     m.content === newMsg.content && 
@@ -196,24 +205,27 @@ const Chat: React.FC = () => {
                 );
 
                 if (optimisticMatchIndex !== -1) {
+                    // Replace optimistic message with real one
                     const newArr = [...prev];
                     newArr[optimisticMatchIndex] = newMsg;
                     return newArr;
                 }
 
+                // 3. Otherwise, it's a new message (from someone else or unexpected), append it.
                 return [...prev, newMsg];
             });
             
-            scrollToBottom();
+            setTimeout(() => scrollToBottom('smooth'), 50);
         })
         .subscribe();
         
     return () => { supabase.removeChannel(channel); };
-  }, [activeRoom]);
+  }, [activeRoom, user, profile]);
 
 
   // C. Send Function (Optimistic)
   const sendMessage = async () => {
+    // Prevent sending if empty
     if (!inputText.trim() || !user || !activeRoom) return;
     
     const textToSend = inputText;
@@ -237,9 +249,9 @@ const Chat: React.FC = () => {
         status: 'sending'
     };
 
-    // Update UI Immediately
+    // Update UI Immediately (Instant!)
     setMessages(prev => [...prev, optimisticMsg]);
-    scrollToBottom();
+    setTimeout(() => scrollToBottom('smooth'), 10);
 
     // 2. Send to Backend
     const { data, error } = await supabase.from('messages').insert({
@@ -254,8 +266,8 @@ const Chat: React.FC = () => {
         console.error("Failed to send", error);
         // Mark as error in UI
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'error' } : m));
-        alert("Failed to send. Please check your connection.");
     } else if (data) {
+        // Update the optimistic message with the real ID from DB
         setMessages(prev => prev.map(m => 
             m.id === tempId ? { ...m, id: data.id, status: 'sent' } : m
         ));
@@ -264,7 +276,6 @@ const Chat: React.FC = () => {
 
   const handleAddEmoji = (emoji: string) => {
     setInputText(prev => prev + emoji);
-    // Keep picker open to allow selecting multiple emojis
   };
 
   // --- 4. RENDER HELPERS ---
@@ -502,16 +513,17 @@ const Chat: React.FC = () => {
                     {showEmojiPicker && (
                         <>
                             <div className="fixed inset-0 z-30" onClick={() => setShowEmojiPicker(false)}></div>
-                            <div className="absolute bottom-20 left-4 z-40 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-72 h-64 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-                                <div className="p-2 bg-slate-900/50 border-b border-slate-700 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                                    Pick an Emoji
+                            <div className="absolute bottom-20 left-4 z-40 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-80 h-72 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+                                <div className="p-3 bg-slate-900/90 backdrop-blur-sm border-b border-slate-700 flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Emoji Picker</span>
+                                    <button onClick={() => setShowEmojiPicker(false)} className="text-slate-500 hover:text-white"><ArrowLeft size={14}/></button>
                                 </div>
-                                <div className="flex-1 overflow-y-auto p-2 grid grid-cols-7 gap-1 scrollbar-hide">
+                                <div className="flex-1 overflow-y-auto p-2 grid grid-cols-7 gap-1 scrollbar-hide bg-slate-900/90">
                                     {EMOJIS.map(emoji => (
                                         <button 
                                             key={emoji} 
                                             onClick={() => handleAddEmoji(emoji)}
-                                            className="w-8 h-8 flex items-center justify-center hover:bg-slate-700 rounded text-xl transition-colors"
+                                            className="w-9 h-9 flex items-center justify-center hover:bg-indigo-600/30 rounded-lg text-xl transition-all hover:scale-110 active:scale-95"
                                         >
                                             {emoji}
                                         </button>
@@ -525,6 +537,7 @@ const Chat: React.FC = () => {
                         <button 
                             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                             className={`p-2 transition-colors ${showEmojiPicker ? 'text-indigo-400' : 'text-slate-400 hover:text-indigo-400'}`}
+                            title="Add Emoji"
                         >
                             <Smile size={24} />
                         </button>
@@ -537,16 +550,17 @@ const Chat: React.FC = () => {
                                     sendMessage();
                                 }
                             }}
-                            placeholder={`Message...`}
-                            className="flex-1 bg-transparent border-none focus:ring-0 text-slate-200 placeholder-slate-500 resize-none max-h-32 min-h-[44px] py-2.5 scrollbar-hide"
+                            placeholder={loadingMessages ? "Loading..." : "Message..."}
+                            disabled={loadingMessages}
+                            className="flex-1 bg-transparent border-none focus:ring-0 text-slate-200 placeholder-slate-500 resize-none max-h-32 min-h-[44px] py-2.5 scrollbar-hide disabled:opacity-50"
                             rows={1}
                         />
                         <button 
                             onClick={sendMessage}
-                            disabled={!inputText.trim()}
+                            disabled={!inputText.trim() || loadingMessages}
                             className={`p-2 rounded-lg transition-all ${
-                                inputText.trim() 
-                                ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20' 
+                                inputText.trim() && !loadingMessages
+                                ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20 active:scale-95' 
                                 : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                             }`}
                         >
