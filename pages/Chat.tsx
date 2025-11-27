@@ -10,6 +10,10 @@ import { useAuth } from '../lib/AuthContext';
 
 const ANIMALS = ['Panda', 'Tiger', 'Fox', 'Eagle', 'Shark', 'Owl', 'Wolf', 'Bear', 'Lion', 'Hawk'];
 
+const EMOJIS = [
+    "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "🥲", "☺️", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗", "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯", "😦", "😧", "😮", "😲", "🥱", "😴", "🤤", "😪", "😵", "🤐", "🥴", "🤢", "🤮", "🤧", "😷", "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👹", "👺", "🤡", "💩", "👻", "💀", "☠️", "👽", "👾", "🤖", "🎃", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾", "👋", "🤚", "🖐", "✋", "🖖", "👌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍", "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝", "🙏", "✍️", "💅", "🤳", "💪", "🦾", "🦿", "🦵", "🦶", "👂", "🦻", "👃", "🧠", "🫀", "🫁", "🦷", "🦴", "👀", "👁", "👅", "👄", "💋", "❤", "🧡", "💛", "💚", "💙", "💜", "🤎", "🖤", "🤍", "💔", "❣", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "🔥", "✨", "🌟", "💫", "💥", "💢", "💦", "💧", "💤", "🕳", "🎉", "🎊", "🎈", "🎂", "🎁", "🧨", "🏆", "🥇", "🥈", "🥉", "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🎱", "🪀", "🏓", "🏸", "🏒", "🏑", "🥍", "🏏", "🪃", "🥅", "⛳", "🪁", "🏹", "🎣", "🤿", "🥊", "🥋", "🎽", "🛹", "🛼", "🛷", "⛸", "🥌", "🎿", "⛷", "🏂", "🪂", "🏋️", "🤼", "🤸", "⛹️", "🤺", "🤾", "🏌️", "🏇", "🧘"
+];
+
 const Chat: React.FC = () => {
   // --- STATE ---
   const { user, profile, loading: authLoading, error: authError } = useAuth();
@@ -24,6 +28,7 @@ const Chat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // --- HELPER: STABLE IDENTITY ---
@@ -142,6 +147,7 @@ const Chat: React.FC = () => {
     // Reset state for new room
     setMessages([]);
     setLoadingMessages(true);
+    setShowEmojiPicker(false); // Close picker on room change
 
     // 1. Fetch History
     const fetchMsgs = async () => {
@@ -170,26 +176,19 @@ const Chat: React.FC = () => {
             const newMsg = payload.new as Message;
             newMsg.status = 'sent';
 
-            // We need to fetch the profile data for this new message if it's not us
-            // (If it is us, we might still want to do this to ensure consistency, or rely on our local optimistic profile)
             if (newMsg.user_id !== user?.id) {
                 const { data: userProfile } = await supabase.from('profiles').select('username, avatar_url').eq('id', newMsg.user_id).single();
                 if (userProfile) {
                     newMsg.profiles = userProfile as Profile;
                 }
             } else {
-                // If it IS us, we probably already have an optimistic version in the state.
-                // We need to match them up.
                 newMsg.profiles = profile;
             }
 
             setMessages(prev => {
                 // Deduplication logic:
-                // 1. Check if ID already exists (Realtime double fire)
                 if (prev.find(m => m.id === newMsg.id)) return prev;
 
-                // 2. Check if we have an optimistic message (temp ID) that matches this content
-                // This prevents the "double message" flash when the DB confirms insertion
                 const optimisticMatchIndex = prev.findIndex(m => 
                     m.user_id === newMsg.user_id && 
                     m.content === newMsg.content && 
@@ -197,13 +196,11 @@ const Chat: React.FC = () => {
                 );
 
                 if (optimisticMatchIndex !== -1) {
-                    // Replace the optimistic message with the real one
                     const newArr = [...prev];
                     newArr[optimisticMatchIndex] = newMsg;
                     return newArr;
                 }
 
-                // If no match, it's a new message from someone else (or a very delayed one from us)
                 return [...prev, newMsg];
             });
             
@@ -221,6 +218,7 @@ const Chat: React.FC = () => {
     
     const textToSend = inputText;
     setInputText(''); // Clear input immediately
+    setShowEmojiPicker(false);
     
     // 1. Create Optimistic Message
     const isAnon = activeRoom.type === 'match';
@@ -258,12 +256,15 @@ const Chat: React.FC = () => {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'error' } : m));
         alert("Failed to send. Please check your connection.");
     } else if (data) {
-        // 3. Success: Update Temp ID to Real ID
-        // Note: The Realtime subscription might fire before or after this.
         setMessages(prev => prev.map(m => 
             m.id === tempId ? { ...m, id: data.id, status: 'sent' } : m
         ));
     }
+  };
+
+  const handleAddEmoji = (emoji: string) => {
+    setInputText(prev => prev + emoji);
+    // Keep picker open to allow selecting multiple emojis
   };
 
   // --- 4. RENDER HELPERS ---
@@ -376,7 +377,7 @@ const Chat: React.FC = () => {
         {activeRoom ? (
             <>
                 {/* Header */}
-                <div className="h-16 px-4 md:px-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50 backdrop-blur-md">
+                <div className="h-16 px-4 md:px-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50 backdrop-blur-md z-20">
                     <div className="flex items-center gap-3">
                         {/* Mobile Back Button */}
                         <button 
@@ -496,9 +497,35 @@ const Chat: React.FC = () => {
                 </div>
 
                 {/* Input Area */}
-                <div className="p-4 bg-slate-900 border-t border-slate-800">
-                    <div className="max-w-4xl mx-auto relative flex items-end gap-2 bg-slate-800/50 p-2 rounded-xl border border-slate-700 focus-within:border-indigo-500/50 focus-within:bg-slate-800 transition-all">
-                        <button className="p-2 text-slate-400 hover:text-indigo-400 transition-colors">
+                <div className="p-4 bg-slate-900 border-t border-slate-800 relative">
+                    {/* Emoji Picker Popover */}
+                    {showEmojiPicker && (
+                        <>
+                            <div className="fixed inset-0 z-30" onClick={() => setShowEmojiPicker(false)}></div>
+                            <div className="absolute bottom-20 left-4 z-40 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-72 h-64 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+                                <div className="p-2 bg-slate-900/50 border-b border-slate-700 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                    Pick an Emoji
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-2 grid grid-cols-7 gap-1 scrollbar-hide">
+                                    {EMOJIS.map(emoji => (
+                                        <button 
+                                            key={emoji} 
+                                            onClick={() => handleAddEmoji(emoji)}
+                                            className="w-8 h-8 flex items-center justify-center hover:bg-slate-700 rounded text-xl transition-colors"
+                                        >
+                                            {emoji}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    <div className="max-w-4xl mx-auto relative flex items-end gap-2 bg-slate-800/50 p-2 rounded-xl border border-slate-700 focus-within:border-indigo-500/50 focus-within:bg-slate-800 transition-all z-20">
+                        <button 
+                            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                            className={`p-2 transition-colors ${showEmojiPicker ? 'text-indigo-400' : 'text-slate-400 hover:text-indigo-400'}`}
+                        >
                             <Smile size={24} />
                         </button>
                         <textarea 
