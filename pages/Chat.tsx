@@ -3,10 +3,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChatRoom, Message, RoomType, Profile } from '../types';
 import { 
   Send, Users, Hash, Zap, Loader2, 
-  MessageSquare, User, Smile, Eye, Lock, AlertTriangle, ArrowLeft, Clock
+  MessageSquare, User, Smile, Eye, Lock, AlertTriangle, ArrowLeft, Clock, MoreHorizontal
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../lib/AuthContext';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
 const ANIMALS = ['Panda', 'Tiger', 'Fox', 'Eagle', 'Shark', 'Owl', 'Wolf', 'Bear', 'Lion', 'Hawk'];
 
@@ -22,18 +23,28 @@ const Chat: React.FC = () => {
   // --- STATE ---
   const { user, profile, loading: authLoading, error: authError } = useAuth();
   
-  // Zone A: Sidebar State
+  // Sidebar State
   const [publicRooms, setPublicRooms] = useState<ChatRoom[]>([]);
   const [privateRooms, setPrivateRooms] = useState<ChatRoom[]>([]);
   const [activeRoom, setActiveRoom] = useState<ChatRoom | null>(null);
   const [isSearchingMatch, setIsSearchingMatch] = useState(false);
   
-  // Zone B: Chat Area State
+  // Chat Area State
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  
+  // Realtime Features State
+  const [onlineUsers, setOnlineUsers] = useState<any[]>([]); 
+  const [typingUsers, setTypingUsers] = useState<string[]>([]); 
+  
+  // Refs
+  const typingTimeoutRef = useRef<any>(null); // For sending
+  const typingTimeoutsMapRef = useRef<Record<string, NodeJS.Timeout>>({}); // For receiving (debounce clearing)
+  const channelRef = useRef<RealtimeChannel | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // --- HELPER: STABLE IDENTITY ---
   const getStableAnimal = (userId: string, roomId: string) => {
@@ -122,7 +133,7 @@ const Chat: React.FC = () => {
     }
   };
 
-  // --- 3. MESSAGING LOGIC (REALTIME & OPTIMISTIC) ---
+  // --- 3. MESSAGING & REALTIME LOGIC ---
   
   const scrollToBottom = (behavior: 'smooth' | 'auto' = 'smooth') => {
     if (messagesEndRef.current) {
@@ -131,14 +142,25 @@ const Chat: React.FC = () => {
   };
 
   // Subscribe and Load Messages
-  // KEY FIX: Only depend on activeRoom.id, not the whole object, to prevent re-renders wiping state
   useEffect(() => {
-    if (!activeRoom) return;
+    if (!activeRoom || !user) return;
 
-    // Reset only if we are truly switching rooms
+    // Reset State
     setMessages([]); 
     setLoadingMessages(true);
     setShowEmojiPicker(false);
+    setOnlineUsers([]);
+    setTypingUsers([]);
+    
+    // Clear typing timeouts
+    Object.values(typingTimeoutsMapRef.current).forEach(clearTimeout);
+    typingTimeoutsMapRef.current = {};
+    
+    // Cleanup previous channel
+    if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+    }
 
     // 1. Fetch History
     const fetchMsgs = async () => {
@@ -150,15 +172,11 @@ const Chat: React.FC = () => {
         
         if (data) {
             const history = data.map(m => ({ ...m, status: 'sent' as const }));
-            
-            // KEY FIX: Merge with existing state (optimistic messages) instead of overwriting
             setMessages(prev => {
-                // Keep any 'sending' or 'error' messages we created locally
-                const pending = prev.filter(m => m.status === 'sending' || m.status === 'error');
-                // Filter out history items that might conflict with pending (unlikely but safe)
+                const myPending = prev.filter(m => m.status === 'sending' || m.status === 'error');
                 const historyIds = new Set(history.map(h => h.id));
-                const uniquePending = pending.filter(p => !historyIds.has(p.id));
-                return [...history, ...uniquePending];
+                const newArrivals = prev.filter(p => !historyIds.has(p.id) && p.status === 'sent');
+                return [...history, ...newArrivals, ...myPending];
             });
             setLoadingMessages(false);
             setTimeout(() => scrollToBottom('auto'), 100);
@@ -168,14 +186,21 @@ const Chat: React.FC = () => {
     };
     fetchMsgs();
 
-    // 2. Realtime Subscription
-    const channel = supabase
-        .channel(`room:${activeRoom.id}`)
+    // 2. Realtime Channel Setup (Messages + Presence + Typing)
+    const channel = supabase.channel(`room:${activeRoom.id}`, {
+        config: {
+            presence: { key: user.id },
+            broadcast: { self: false } // Don't receive own typing events
+        }
+    });
+
+    channel
+        // A. Handle Incoming Messages
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${activeRoom.id}` }, async (payload) => {
             const newMsg = payload.new as Message;
             newMsg.status = 'sent';
 
-            if (newMsg.user_id !== user?.id) {
+            if (newMsg.user_id !== user.id) {
                 const { data: userProfile } = await supabase.from('profiles').select('username, avatar_url').eq('id', newMsg.user_id).single();
                 if (userProfile) newMsg.profiles = userProfile as Profile;
             } else {
@@ -183,16 +208,12 @@ const Chat: React.FC = () => {
             }
 
             setMessages(prev => {
-                // Deduplication
                 if (prev.find(m => m.id === newMsg.id)) return prev;
-
-                // Match optimistic message
                 const optimisticMatchIndex = prev.findIndex(m => 
                     m.user_id === newMsg.user_id && 
                     m.content === newMsg.content && 
                     m.status === 'sending'
                 );
-
                 if (optimisticMatchIndex !== -1) {
                     const newArr = [...prev];
                     newArr[optimisticMatchIndex] = newMsg;
@@ -202,19 +223,87 @@ const Chat: React.FC = () => {
             });
             setTimeout(() => scrollToBottom('smooth'), 50);
         })
-        .subscribe();
-        
-    return () => { supabase.removeChannel(channel); };
-  }, [activeRoom?.id]); // Only re-run if ID changes, ignore other object ref changes
+        // B. Handle Presence (Who is online)
+        .on('presence', { event: 'sync' }, () => {
+            const newState = channel.presenceState();
+            const users = Object.keys(newState);
+            setOnlineUsers(users);
+        })
+        // C. Handle Typing Indicators
+        .on('broadcast', { event: 'typing' }, (payload) => {
+             const typerName = payload.payload.name;
+             if (!typerName) return;
+             
+             // Clear existing timeout to prevent premature removal if they keep typing
+             if (typingTimeoutsMapRef.current[typerName]) {
+                 clearTimeout(typingTimeoutsMapRef.current[typerName]);
+             }
 
+             setTypingUsers(prev => {
+                 if (prev.includes(typerName)) return prev;
+                 return [...prev, typerName];
+             });
+
+             // Set new timeout to remove user
+             typingTimeoutsMapRef.current[typerName] = setTimeout(() => {
+                 setTypingUsers(prev => prev.filter(name => name !== typerName));
+                 delete typingTimeoutsMapRef.current[typerName];
+             }, 3000);
+        })
+        .subscribe(async (status) => {
+            if (status === 'SUBSCRIBED') {
+                const displayName = activeRoom.type === 'match' 
+                    ? `Anonymous ${getStableAnimal(user.id, activeRoom.id)}`
+                    : profile?.username || 'Student';
+                    
+                await channel.track({ 
+                    online_at: new Date().toISOString(),
+                    name: displayName,
+                    is_anon: activeRoom.type === 'match'
+                });
+            }
+        });
+
+    channelRef.current = channel;
+
+    return () => { 
+        supabase.removeChannel(channel); 
+        channelRef.current = null;
+    };
+  }, [activeRoom?.id, user?.id]);
+
+
+  // --- TYPING HANDLER ---
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      setInputText(e.target.value);
+      
+      if (!channelRef.current || !user || !activeRoom) return;
+
+      // Rate limit sending 'typing' events (every 2s max)
+      if (typingTimeoutRef.current) return;
+
+      const displayName = activeRoom.type === 'match' 
+        ? `Anonymous ${getStableAnimal(user.id, activeRoom.id)}`
+        : profile?.username || 'Student';
+
+      channelRef.current.send({
+          type: 'broadcast',
+          event: 'typing',
+          payload: { name: displayName }
+      });
+
+      typingTimeoutRef.current = setTimeout(() => {
+          typingTimeoutRef.current = null;
+      }, 2000);
+  };
 
   const sendMessage = async () => {
-    // KEY FIX: Allow sending even if loading history
     if (!inputText.trim() || !user || !activeRoom) return;
     
     const textToSend = inputText;
     setInputText(''); 
     setShowEmojiPicker(false);
+    inputRef.current?.focus(); 
     
     const isAnon = activeRoom.type === 'match';
     const fakeName = isAnon ? `Anonymous ${getStableAnimal(user.id, activeRoom.id)}` : undefined;
@@ -232,7 +321,6 @@ const Chat: React.FC = () => {
         status: 'sending'
     };
 
-    // Instant UI update
     setMessages(prev => [...prev, optimisticMsg]);
     setTimeout(() => scrollToBottom('smooth'), 10);
 
@@ -254,6 +342,7 @@ const Chat: React.FC = () => {
 
   const handleAddEmoji = (emoji: string) => {
     setInputText(prev => prev + emoji);
+    inputRef.current?.focus();
   };
 
   // --- RENDER ---
@@ -314,7 +403,17 @@ const Chat: React.FC = () => {
                         <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center">{activeRoom.type === 'public' ? <Hash size={20} className="text-slate-400" /> : <Zap size={20} className="text-yellow-400" />}</div>
                         <div>
                             <h2 className="text-lg font-bold text-white leading-tight">{activeRoom.type === 'public' ? activeRoom.name : 'Anonymous Match'}</h2>
-                            <p className="text-xs text-green-400 flex items-center gap-1">{activeRoom.type === 'public' ? <><span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>Live</> : <span className="text-indigo-400">You are <b>Anonymous {myAnonIdentity}</b></span>}</p>
+                            <div className="flex items-center gap-3">
+                                <p className="text-xs text-green-400 flex items-center gap-1">
+                                    {activeRoom.type === 'public' ? <><span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>Live</> : <span className="text-indigo-400">You are <b>Anonymous {myAnonIdentity}</b></span>}
+                                </p>
+                                {/* Online Count Badge */}
+                                {onlineUsers.length > 0 && (
+                                    <span className="text-xs text-slate-500 flex items-center gap-1 px-2 py-0.5 bg-slate-800 rounded-full">
+                                        <Users size={10} /> {onlineUsers.length} Online
+                                    </span>
+                                )}
+                            </div>
                         </div>
                     </div>
                     {activeRoom.type === 'match' && (
@@ -358,7 +457,24 @@ const Chat: React.FC = () => {
                     <div ref={messagesEndRef} />
                 </div>
 
+                {/* Typing Indicator & Input */}
                 <div className="p-4 bg-slate-900 border-t border-slate-800 relative">
+                    {/* Enhanced Bubble Typing Indicator */}
+                    {typingUsers.length > 0 && (
+                        <div className="absolute -top-8 left-4 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-full flex items-center gap-2 shadow-lg animate-in slide-in-from-bottom-2 fade-in">
+                            <div className="flex space-x-0.5 mt-1">
+                                <div className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                <div className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                <div className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce"></div>
+                            </div>
+                            <span className="text-xs text-slate-400 font-medium">
+                                {typingUsers.length === 1 
+                                    ? <span className="text-indigo-400">{typingUsers[0]}</span> 
+                                    : <span className="text-indigo-400">{typingUsers.length} people</span>} is typing...
+                            </span>
+                        </div>
+                    )}
+
                     {showEmojiPicker && (
                         <>
                             <div className="fixed inset-0 z-30" onClick={() => setShowEmojiPicker(false)}></div>
@@ -375,7 +491,7 @@ const Chat: React.FC = () => {
                     )}
                     <div className="max-w-4xl mx-auto relative flex items-end gap-2 bg-slate-800/50 p-2 rounded-xl border border-slate-700 focus-within:border-indigo-500/50 focus-within:bg-slate-800 transition-all z-20">
                         <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 transition-colors ${showEmojiPicker ? 'text-indigo-400' : 'text-slate-400 hover:text-indigo-400'}`} title="Add Emoji"><Smile size={24} /></button>
-                        <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Message..." className="flex-1 bg-transparent border-none focus:ring-0 text-slate-200 placeholder-slate-500 resize-none max-h-32 min-h-[44px] py-2.5 scrollbar-hide disabled:opacity-50" rows={1} />
+                        <textarea ref={inputRef} value={inputText} onChange={handleInputChange} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Message..." className="flex-1 bg-transparent border-none focus:ring-0 text-slate-200 placeholder-slate-500 resize-none max-h-32 min-h-[44px] py-2.5 scrollbar-hide disabled:opacity-50" rows={1} />
                         <button onClick={sendMessage} disabled={!inputText.trim()} className={`p-2 rounded-lg transition-all ${inputText.trim() ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20 active:scale-95' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}><Send size={20} /></button>
                     </div>
                     {activeRoom.type === 'match' && <div className="text-center mt-2"><span className="text-xs text-slate-500 flex items-center justify-center gap-1"><Zap size={10} className="text-yellow-500" /> You are chatting as <b>Anonymous {myAnonIdentity}</b></span></div>}
@@ -387,11 +503,42 @@ const Chat: React.FC = () => {
       </div>
 
       <div className="w-64 bg-slate-900 border-l border-slate-800 hidden lg:flex flex-col p-6">
-        {activeRoom && activeRoom.type === 'public' ? (
-            <><h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Room Info</h3><p className="text-sm text-slate-400 mb-6">This is a public broadcast channel. Be respectful to your fellow VITAP students.</p></>
-        ) : activeRoom && activeRoom.type === 'match' ? (
-            <><div className="flex flex-col items-center mt-6"><div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-4 relative"><Zap size={32} className="text-yellow-400" /><span className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 border-2 border-slate-900 rounded-full"></span></div><h3 className="font-bold text-white">Anonymous Match</h3><p className="text-xs text-slate-500 mt-1">Found via Queue</p></div></>
-        ) : <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">Select a chat to see details</div>}
+        {activeRoom ? (
+            <>
+                 <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Active Now</h3>
+                 <div className="space-y-3 overflow-y-auto max-h-[60vh]">
+                    {onlineUsers.length > 0 ? onlineUsers.map((uid, i) => (
+                        <div key={i} className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2">
+                            <div className="relative">
+                                <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-400">
+                                    <User size={14} />
+                                </div>
+                                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-slate-900 rounded-full"></div>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-slate-300 truncate">
+                                    {uid === user?.id ? "You" : (activeRoom.type === 'match' ? `Anon User` : `User ${uid.slice(0,4)}...`)}
+                                </div>
+                                <div className="text-[10px] text-green-500">Online</div>
+                            </div>
+                        </div>
+                    )) : (
+                        <div className="text-xs text-slate-600 italic">Syncing presence...</div>
+                    )}
+                 </div>
+
+                 <div className="mt-8 pt-6 border-t border-slate-800">
+                     <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Room Details</h3>
+                     <p className="text-xs text-slate-400 leading-relaxed">
+                        {activeRoom.type === 'public' 
+                            ? "This is a public broadcast channel. Messages here are visible to everyone at VITAP."
+                            : "This is a private, anonymous match. Your identity is hidden until you choose to reveal it."}
+                     </p>
+                 </div>
+            </>
+        ) : (
+            <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">Select a chat to see details</div>
+        )}
       </div>
     </div>
   );

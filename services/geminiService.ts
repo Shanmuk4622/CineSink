@@ -1,14 +1,24 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Movie } from "../types";
 
 // NOTE: In a real deployment, ensure process.env.API_KEY is set.
-const apiKey = process.env.API_KEY;
+// We use a safe check here to prevent ReferenceError: process is not defined in browser environments
+const getApiKey = () => {
+  try {
+    return typeof process !== 'undefined' && process.env ? process.env.API_KEY : '';
+  } catch (e) {
+    return '';
+  }
+};
+
+const apiKey = getApiKey();
 
 export const getAIRecommendations = async (
   watchedMovies: string[], 
   favoriteGenre: string
 ): Promise<string> => {
-  if (!apiKey || apiKey === 'dummy_key') {
+  if (!apiKey || apiKey === 'dummy_key' || apiKey === '') {
       return "Gemini API Key is missing. Please add it to your environment variables to unlock smart recommendations.";
   }
 
