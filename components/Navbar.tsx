@@ -1,5 +1,7 @@
+
 import React from 'react';
-import { Film, Users, User, Menu, X, Search } from 'lucide-react';
+import { Film, Users, User, Menu, X, Loader2 } from 'lucide-react';
+import { useAuth } from '../lib/AuthContext';
 
 interface NavbarProps {
   currentPage: string;
@@ -8,6 +10,7 @@ interface NavbarProps {
 
 const Navbar: React.FC<NavbarProps> = ({ currentPage, setPage }) => {
   const [isOpen, setIsOpen] = React.useState(false);
+  const { profile, loading } = useAuth();
 
   const navItems = [
     { id: 'dashboard', label: 'Discovery', icon: <Film size={20} /> },
@@ -29,8 +32,8 @@ const Navbar: React.FC<NavbarProps> = ({ currentPage, setPage }) => {
           </div>
 
           {/* Desktop Nav */}
-          <div className="hidden md:block">
-            <div className="ml-10 flex items-baseline space-x-4">
+          <div className="hidden md:flex items-center gap-6">
+            <div className="flex items-baseline space-x-4">
               {navItems.map((item) => (
                 <button
                   key={item.id}
@@ -45,6 +48,21 @@ const Navbar: React.FC<NavbarProps> = ({ currentPage, setPage }) => {
                   {item.label}
                 </button>
               ))}
+            </div>
+
+            {/* Profile Status */}
+            <div className="border-l border-slate-700 pl-6">
+                {loading ? (
+                    <Loader2 className="animate-spin text-slate-500" size={20} />
+                ) : profile ? (
+                    <div className="flex items-center gap-2" onClick={() => setPage('profile')}>
+                        <div className="w-8 h-8 rounded-full bg-slate-800 overflow-hidden border border-slate-600 cursor-pointer">
+                            <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                        </div>
+                    </div>
+                ) : (
+                    <div className="w-8 h-8 rounded-full bg-slate-800"></div>
+                )}
             </div>
           </div>
 

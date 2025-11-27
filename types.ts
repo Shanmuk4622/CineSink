@@ -1,8 +1,10 @@
+
 // TMDB Data Types
 export interface Movie {
   id: number;
   title: string;
   poster_path: string;
+  backdrop_path?: string; // High res horizontal image
   overview: string;
   vote_average: number;
   release_date: string;
@@ -13,6 +15,15 @@ export interface Profile {
   id: string; // UUID
   username: string;
   avatar_url?: string;
+  watched_count?: number;
+}
+
+export interface LibraryItem {
+  id: string;
+  user_id: string;
+  movie_id: number;
+  status: 'watched' | 'watchlist';
+  created_at: string;
 }
 
 // Chat System Types
@@ -41,7 +52,7 @@ export interface Message {
   fake_username?: string;
   
   // Joins
-  profiles?: Profile;
+  profiles?: Profile | null;
 }
 
 export interface MatchQueueEntry {
